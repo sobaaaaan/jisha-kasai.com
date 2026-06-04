@@ -234,6 +234,7 @@ export default function CaseMap() {
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
   const [cases, setCases] = useState<CasePoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   const loadData = useCallback(async (filter: CategoryFilter) => {
     setLoading(true);
@@ -295,12 +296,6 @@ export default function CaseMap() {
       `;
       el.title = item.description;
 
-      el.addEventListener("mouseenter", () => {
-        el.style.transform = "scale(1.25)";
-      });
-      el.addEventListener("mouseleave", () => {
-        el.style.transform = "scale(1)";
-      });
 
       const popup = new maplibregl.Popup({
         offset: 18,
@@ -318,19 +313,120 @@ export default function CaseMap() {
     });
   }, [cases, loading]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      mapRef.current?.resize();
+    }, 260);
+
+    return () => window.clearTimeout(timer);
+  }, [isMobileSidebarOpen]);
+
   const latestCases = [...cases].slice(0, 10);
 
   return (
     <div
+      className="case-map-layout"
       style={{
         width: "100vw",
         height: "100vh",
         display: "flex",
         background: "#f4f4f4",
         overflow: "hidden",
+        position: "relative",
       }}
     >
+      <style>{`
+        .mobile-menu-button,
+        .mobile-sidebar-close,
+        .mobile-sidebar-overlay {
+          display: none;
+        }
+
+        @media (max-width: 768px) {
+          .case-map-layout {
+            display: block !important;
+          }
+
+          .case-map-sidebar {
+            position: fixed !important;
+            top: 0;
+            left: 0;
+            width: min(88vw, 360px) !important;
+            min-width: 0 !important;
+            max-width: min(88vw, 360px) !important;
+            height: 100dvh !important;
+            z-index: 1000 !important;
+            transform: translateX(-104%);
+            transition: transform 0.24s ease;
+            border-right: 1px solid #ddd;
+          }
+
+          .case-map-sidebar.open {
+            transform: translateX(0);
+          }
+
+          .case-map-main {
+            width: 100vw !important;
+            height: 100dvh !important;
+            min-width: 0 !important;
+          }
+
+          .case-map-topbar {
+            display: none !important;
+          }
+
+          .mobile-menu-button {
+            display: block !important;
+          }
+
+          .mobile-sidebar-close {
+            display: block !important;
+          }
+
+          .mobile-sidebar-overlay.open {
+            display: block !important;
+          }
+        }
+      `}</style>
+      <button
+        type="button"
+        className="mobile-menu-button"
+        onClick={() => setIsMobileSidebarOpen(true)}
+        style={{
+          position: "absolute",
+          top: 12,
+          left: 12,
+          zIndex: 900,
+          border: "none",
+          borderRadius: 999,
+          padding: "10px 14px",
+          background: "#1a1a1a",
+          color: "#fff",
+          fontSize: 14,
+          fontWeight: 700,
+          boxShadow: "0 2px 10px rgba(0,0,0,0.25)",
+          cursor: "pointer",
+        }}
+      >
+        ☰ 情報
+      </button>
+      <button
+        type="button"
+        aria-label="左カラムを閉じる"
+        className={`mobile-sidebar-overlay ${isMobileSidebarOpen ? "open" : ""}`}
+        onClick={() => setIsMobileSidebarOpen(false)}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 999,
+          border: "none",
+          background: "rgba(0,0,0,0.28)",
+          padding: 0,
+          cursor: "pointer",
+        }}
+      />
       <aside
+        className={`case-map-sidebar ${isMobileSidebarOpen ? "open" : ""}`}
         style={{
           width: 340,
           minWidth: 300,
@@ -344,12 +440,31 @@ export default function CaseMap() {
         }}
       >
         <div style={{ padding: "18px 18px 24px" }}>
+          <button
+            type="button"
+            className="mobile-sidebar-close"
+            onClick={() => setIsMobileSidebarOpen(false)}
+            style={{
+              marginLeft: "auto",
+              marginBottom: 12,
+              border: "none",
+              borderRadius: 999,
+              padding: "7px 12px",
+              background: "#eeeeee",
+              color: "#222",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            閉じる
+          </button>
           <h1 style={{ fontSize: 20, margin: "0 0 4px", fontWeight: 800, color: "#1a1a1a" }}>
-            不起訴事件マップ
+            寺社等重要施設火災マップ
           </h1>
 
           <p style={{ margin: "0 0 14px", color: "#666", fontSize: 12, lineHeight: 1.6 }}>
-            報道・公開情報をもとに、不起訴処分等の事件情報を地図上で可視化します。
+            報道・公開情報をもとに、重要施設の不審火災を地図上で可視化します。
           </p>
 
           <a
@@ -367,7 +482,7 @@ export default function CaseMap() {
               marginBottom: 16,
             }}
           >
-            事件情報を投稿する
+            火災事例を投稿する
           </a>
 
           <section style={cardStyle}>
@@ -383,7 +498,7 @@ export default function CaseMap() {
           <section style={cardStyle}>
             <h2 style={sectionTitleStyle}>絞り込み</h2>
 
-            <label style={labelStyle}>犯罪カテゴリ</label>
+            <label style={labelStyle}>施設別</label>
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}
@@ -398,14 +513,15 @@ export default function CaseMap() {
             </select>
 
             <p style={{ fontSize: 11, color: "#999", lineHeight: 1.6, margin: "10px 0 0" }}>
-              ※latitude / longitude が入っている事件のみ表示します。
+              ※latitude / longitude が入っている火災のみ表示します。
             </p>
           </section>
 
           <section style={sideAdStyle}>
             左カラム広告枠
             <br />
-            <span style={{ fontSize: 11 }}>縦長広告・自社広告・note導線など</span>
+            <span style={{ fontSize: 11 }}><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3565332504315639"
+     crossorigin="anonymous"></script></span>
           </section>
 
           <section style={cardStyle}>
@@ -425,6 +541,7 @@ export default function CaseMap() {
                     <button
                       type="button"
                       onClick={() => {
+                        setIsMobileSidebarOpen(false);
                         mapRef.current?.flyTo({
                           center: [item.lng, item.lat],
                           zoom: 12,
@@ -462,11 +579,44 @@ export default function CaseMap() {
               現在は「1事件=1ピン」の試験表示です。住所から緯度経度を自動取得する処理を追加すると、投稿内容が自動で地図に反映されます。
             </p>
           </section>
+
+
+          <section style={legalLinksStyle}>
+            <h2 style={legalLinksTitleStyle}>サイト運営方針</h2>
+             <a href="/operator" style={legalLinkStyle}>
+              サイト運営者情報
+            </a>
+            <a href="/policy" style={legalLinkStyle}>
+              投稿ポリシー
+            </a>
+              <a href="/privacy" style={legalLinkStyle}>
+              プライバシーポリシー
+            </a>
+            <a href="/delete-request" style={legalLinkStyle}>
+              削除依頼フォーム
+            </a>
+            <a href="/appeal" style={legalLinkStyle}>
+              異議申立てフォーム
+            </a>
+            <p style={{ fontSize: 11, color: "#999", lineHeight: 1.6, margin: "10px 0 0" }}>
+              掲載内容に問題がある場合は、削除依頼または異議申立てフォームからご連絡ください。
+            </p>
+              <a href="/contact" style={legalLinkStyle}>
+              お問い合わせ
+            </a>
+           
+          
+             <a href="/about" style={legalLinkStyle}>
+              このサイトの目的
+            </a>
+            
+            
+          </section>
         </div>
       </aside>
 
-      <section style={{ flex: 1, height: "100vh", display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <header style={topBarStyle}>
+      <section className="case-map-main" style={{ flex: 1, height: "100vh", display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <header className="case-map-topbar" style={topBarStyle}>
           <div style={topAdStyle}>
             上部広告枠
             <br />
@@ -574,5 +724,29 @@ const topAdStyle: React.CSSProperties = {
   justifyContent: "center",
   textAlign: "center",
   fontSize: 13,
+  lineHeight: 1.5,
+};
+
+
+const legalLinksStyle: React.CSSProperties = {
+  borderTop: "1px solid #eee",
+  paddingTop: 14,
+  marginTop: 4,
+  marginBottom: 4,
+};
+
+const legalLinksTitleStyle: React.CSSProperties = {
+  fontSize: 12,
+  margin: "0 0 8px",
+  fontWeight: 700,
+  color: "#777",
+};
+
+const legalLinkStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: 12,
+  color: "#1565c0",
+  textDecoration: "underline",
+  marginBottom: 7,
   lineHeight: 1.5,
 };

@@ -1,9 +1,7 @@
-"use client";
 
+"use client";
 import { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
-
-console.log("★★★★★ CaseSubmissionForm.tsx が読み込まれました ★★★★★");
 
 // ============================================================
 // Supabase クライアント（公開鍵）
@@ -30,35 +28,33 @@ type CitiesRow = {
   center_lng: number | null;
 };
 
-type CrimeCategory =
-  | "violent"
-  | "property"
-  | "sexual"
-  | "drug"
-  | "traffic"
-  | "public_order"
-  | "white_collar"
-  | "cyber"
+type FacilityType =
+  | "temple"
+  | "shrine"
+  | "pig_farm"
+  | "chicken_farm"
+  | "sake_brewery"
+  | "cultural_property"
   | "other";
 
-type CaseStatus =
-  | "nonprosecution"
-  | "nonprosecution_suspend"
-  | "nonprosecution_innocence"
-  | "indicted"
-  | "convicted"
-  | "acquitted"
-  | "dismissed"
+type FireCause =
+  | "investigating"
+  | "electrical"
+  | "arson"
+  | "suspected_arson"
+  | "careless_fire"
+  | "lightning"
+  | "unknown"
   | "other";
 
 type FormState = {
   occurred_year: string;
   occurred_month: string;
-  prefecture_id: string; // ID管理に変更
-  city_id: string;       // プルダウン（ID管理）に変更
-  crime_category: CrimeCategory;
-  crime_type: string;
-  status: CaseStatus;
+  prefecture_id: string;
+  city_id: string;
+  facility_type: FacilityType;
+  facility_name: string;
+  fire_cause: FireCause;
   description: string;
   source_url: string;
   submitter_comment: string;
@@ -70,48 +66,42 @@ type SubmitStatus = "idle" | "submitting" | "success" | "error";
 // 定数
 // ============================================================
 
-const CRIME_CATEGORIES: { value: CrimeCategory; label: string }[] = [
-  { value: "property",     label: "財産犯罪（窃盗・詐欺・横領など）" },
-  { value: "violent",      label: "暴力犯罪（傷害・暴行・脅迫など）" },
-  { value: "drug",         label: "薬物犯罪" },
-  { value: "traffic",      label: "交通犯罪" },
-  { value: "sexual",       label: "性犯罪" },
-  { value: "public_order", label: "公序・風俗犯罪" },
-  { value: "white_collar", label: "経済・企業犯罪" },
-  { value: "cyber",        label: "サイバー犯罪" },
-  { value: "other",        label: "その他" },
+const FACILITY_TYPES: { value: FacilityType; label: string }[] = [
+  { value: "temple", label: "寺院" },
+  { value: "shrine", label: "神社" },
+  { value: "pig_farm", label: "豚舎" },
+  { value: "chicken_farm", label: "鶏舎" },
+  { value: "sake_brewery", label: "酒蔵" },
+  { value: "cultural_property", label: "重要文化財・文化施設" },
+  { value: "other", label: "その他重要施設" },
 ];
 
-const CASE_STATUSES: { value: CaseStatus; label: string }[] = [
-  { value: "nonprosecution_suspend",   label: "起訴猶予" },
-  { value: "nonprosecution_innocence", label: "嫌疑なし・嫌疑不十分" },
-  { value: "nonprosecution",           label: "不起訴（その他）" },
-  { value: "indicted",                 label: "起訴" },
-  { value: "convicted",                label: "有罪" },
-  { value: "acquitted",                label: "無罪" },
-  { value: "dismissed",                label: "公訴棄却" },
-  { value: "other",                    label: "その他" },
+const FIRE_CAUSES: { value: FireCause; label: string }[] = [
+  { value: "investigating", label: "調査中" },
+  { value: "electrical", label: "電気設備" },
+  { value: "arson", label: "放火（確定）" },
+  { value: "suspected_arson", label: "放火の疑い" },
+  { value: "careless_fire", label: "失火" },
+  { value: "lightning", label: "落雷" },
+  { value: "unknown", label: "原因不明" },
+  { value: "other", label: "その他" },
 ];
 
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = Array.from({ length: 10 }, (_, i) => CURRENT_YEAR - i);
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
 
-const DESCRIPTION_MIN = 100;
-const DESCRIPTION_MAX = 500;
-
-// ============================================================
-// 初期フォーム値
-// ============================================================
+const DESCRIPTION_MIN = 80;
+const DESCRIPTION_MAX = 300;
 
 const INITIAL_FORM: FormState = {
   occurred_year: "",
   occurred_month: "",
   prefecture_id: "",
   city_id: "",
-  crime_category: "property",
-  crime_type: "",
-  status: "nonprosecution_suspend",
+  facility_type: "temple",
+  facility_name: "",
+  fire_cause: "investigating",
   description: "",
   source_url: "",
   submitter_comment: "",
@@ -129,9 +119,6 @@ export default function CaseSubmissionForm() {
   const [errorMessage, setErrorMessage] = useState("");
   const [descLength, setDescLength] = useState(0);
 
-  // ---------- データフェッチ (マスターデータ) ----------
-
-  // 1. 初期ロード時に都道府県一覧を取得
   useEffect(() => {
     async function fetchPrefectures() {
       try {
@@ -148,10 +135,10 @@ export default function CaseSubmissionForm() {
         setSubmitStatus("error");
       }
     }
+
     fetchPrefectures();
   }, []);
 
-  // 2. 都道府県(prefecture_id)が変更されたら、紐づく市区町村一覧を取得
   useEffect(() => {
     if (!form.prefecture_id) {
       setCities([]);
@@ -178,20 +165,18 @@ export default function CaseSubmissionForm() {
     fetchCities();
   }, [form.prefecture_id]);
 
-  // ---------- ハンドラ ----------
-
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
-    
+
     setForm((prev) => {
       const updated = { ...prev, [name]: value };
-      
-      // 都道府県が変更されたら市区町村の選択をリセットする
+
       if (name === "prefecture_id") {
         updated.city_id = "";
       }
+
       return updated;
     });
 
@@ -203,7 +188,12 @@ export default function CaseSubmissionForm() {
     setSubmitStatus("submitting");
     setErrorMessage("");
 
-    // 1. 基本バリデーション
+    if (!form.occurred_year || !form.occurred_month) {
+      setErrorMessage("発生年月を選択してください。");
+      setSubmitStatus("error");
+      return;
+    }
+
     if (!form.prefecture_id || !form.city_id) {
       setErrorMessage("都道府県と市区町村を選択してください。");
       setSubmitStatus("error");
@@ -211,21 +201,19 @@ export default function CaseSubmissionForm() {
     }
 
     if (descLength < DESCRIPTION_MIN) {
-      setErrorMessage(`事件概要は${DESCRIPTION_MIN}文字以上入力してください（現在 ${descLength} 文字）`);
+      setErrorMessage(`火災概要は${DESCRIPTION_MIN}文字以上入力してください（現在 ${descLength} 文字）`);
       setSubmitStatus("error");
       return;
     }
 
-    // URL フォーマットチェック（入力がある場合のみ）
     if (form.source_url && !form.source_url.startsWith("http")) {
-      setErrorMessage("ソースURLは http:// または https:// で始まる形式で入力してください");
+      setErrorMessage("ソースURLは http:// または https:// で始まる形式で入力してください。");
       setSubmitStatus("error");
       return;
     }
 
-    // 2. 選択された市区町村（座標データ含む）の特定と検証
     const selectedCity = cities.find((c) => c.id === Number(form.city_id));
-    
+
     if (!selectedCity) {
       setErrorMessage("選択された市区町村データが見つかりません。");
       setSubmitStatus("error");
@@ -233,28 +221,28 @@ export default function CaseSubmissionForm() {
     }
 
     if (selectedCity.center_lat === null || selectedCity.center_lng === null) {
-      setErrorMessage("選択された市区町村にピン表示用の位置情報（緯度・経度）が登録されていません。管理者に連絡してください。");
+      setErrorMessage("選択された市区町村にピン表示用の位置情報が登録されていません。");
       setSubmitStatus("error");
       return;
     }
 
     try {
-      // 3. cases テーブルへのインサート処理
       const { error } = await supabase.from("cases").insert({
-        prefecture_id:  Number(form.prefecture_id),
-        city_id:        selectedCity.id,
-        latitude:       selectedCity.center_lat,  // 中心緯度をセット
-        longitude:      selectedCity.center_lng,  // 中心経度をセット
-        occurred_year:  Number(form.occurred_year),
+        prefecture_id: Number(form.prefecture_id),
+        city_id: selectedCity.id,
+        latitude: selectedCity.center_lat,
+        longitude: selectedCity.center_lng,
+        occurred_year: Number(form.occurred_year),
         occurred_month: Number(form.occurred_month),
-        crime_category: form.crime_category,
-        crime_type:     form.crime_type,
-        status:         form.status,
-        description:    form.description,
+        facility_type: form.facility_type,
+        facility_name: form.facility_name || null,
+        fire_cause: form.fire_cause,
+        description: form.description,
         description_masked: false,
-        source_url:     form.source_url || null,
-        source_name:    null,
-        is_published:   false, // 管理者承認待ち
+        source_url: form.source_url || null,
+        source_name: null,
+        submitter_comment: form.submitter_comment || null,
+        is_published: false,
       });
 
       if (error) throw error;
@@ -264,15 +252,14 @@ export default function CaseSubmissionForm() {
       setDescLength(0);
     } catch (err: unknown) {
       console.error("投稿エラー:", err);
-      const message = err instanceof Error ? err.message : "投稿に失敗しました。時間をおいて再度お試しください。";
+      const message =
+        err instanceof Error
+          ? err.message
+          : "投稿に失敗しました。時間をおいて再度お試しください。";
       setErrorMessage(message);
       setSubmitStatus("error");
     }
   };
-
-  // ============================================================
-  // スタイル定数（インライン）
-  // ============================================================
 
   const s = {
     wrap: {
@@ -281,13 +268,11 @@ export default function CaseSubmissionForm() {
       padding: "0 16px 60px",
       fontFamily: "'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif",
     } as React.CSSProperties,
-
     header: {
       borderBottom: "2px solid #1a1a1a",
       paddingBottom: 16,
       marginBottom: 32,
     } as React.CSSProperties,
-
     h1: {
       fontSize: 22,
       fontWeight: 700,
@@ -295,13 +280,12 @@ export default function CaseSubmissionForm() {
       margin: "0 0 6px",
       color: "#1a1a1a",
     } as React.CSSProperties,
-
     subtitle: {
       fontSize: 13,
       color: "#666",
       margin: 0,
+      lineHeight: 1.7,
     } as React.CSSProperties,
-
     section: {
       background: "#fff",
       border: "1px solid #e8e8e8",
@@ -309,7 +293,6 @@ export default function CaseSubmissionForm() {
       padding: "24px 28px",
       marginBottom: 16,
     } as React.CSSProperties,
-
     sectionTitle: {
       fontSize: 12,
       fontWeight: 700,
@@ -321,7 +304,6 @@ export default function CaseSubmissionForm() {
       alignItems: "center",
       gap: 8,
     } as React.CSSProperties,
-
     sectionDot: (color: string): React.CSSProperties => ({
       width: 6,
       height: 6,
@@ -329,11 +311,9 @@ export default function CaseSubmissionForm() {
       background: color,
       display: "inline-block",
     }),
-
     field: {
       marginBottom: 20,
     } as React.CSSProperties,
-
     label: {
       display: "block",
       fontSize: 13,
@@ -341,27 +321,24 @@ export default function CaseSubmissionForm() {
       color: "#333",
       marginBottom: 6,
     } as React.CSSProperties,
-
     required: {
       fontSize: 11,
       color: "#E24B4A",
       marginLeft: 4,
       fontWeight: 400,
     } as React.CSSProperties,
-
     optional: {
       fontSize: 11,
       color: "#999",
       marginLeft: 4,
       fontWeight: 400,
     } as React.CSSProperties,
-
     hint: {
       fontSize: 12,
       color: "#888",
       marginTop: 5,
+      lineHeight: 1.6,
     } as React.CSSProperties,
-
     input: {
       width: "100%",
       padding: "10px 12px",
@@ -371,10 +348,8 @@ export default function CaseSubmissionForm() {
       color: "#1a1a1a",
       background: "#fafafa",
       outline: "none",
-      transition: "border-color 0.15s",
       boxSizing: "border-box" as const,
     } as React.CSSProperties,
-
     select: {
       width: "100%",
       padding: "10px 12px",
@@ -392,7 +367,6 @@ export default function CaseSubmissionForm() {
       backgroundPosition: "right 12px center",
       paddingRight: 36,
     } as React.CSSProperties,
-
     textarea: {
       width: "100%",
       padding: "10px 12px",
@@ -407,12 +381,10 @@ export default function CaseSubmissionForm() {
       boxSizing: "border-box" as const,
       fontFamily: "inherit",
     } as React.CSSProperties,
-
     row: {
       display: "flex",
       gap: 12,
     } as React.CSSProperties,
-
     counter: (count: number): React.CSSProperties => ({
       fontSize: 12,
       marginTop: 5,
@@ -425,7 +397,6 @@ export default function CaseSubmissionForm() {
           : "#1D9E75",
       fontWeight: 500,
     }),
-
     notice: {
       background: "#FFF8E6",
       border: "1px solid #F5D68A",
@@ -436,7 +407,6 @@ export default function CaseSubmissionForm() {
       lineHeight: 1.6,
       marginBottom: 20,
     } as React.CSSProperties,
-
     errorBox: {
       background: "#FFF0F0",
       border: "1px solid #F7C1C1",
@@ -446,7 +416,6 @@ export default function CaseSubmissionForm() {
       color: "#791F1F",
       marginBottom: 16,
     } as React.CSSProperties,
-
     successBox: {
       background: "#E1F5EE",
       border: "1px solid #5DCAA5",
@@ -454,7 +423,6 @@ export default function CaseSubmissionForm() {
       padding: "32px 28px",
       textAlign: "center" as const,
     } as React.CSSProperties,
-
     submitBtn: {
       width: "100%",
       padding: "14px 24px",
@@ -466,13 +434,8 @@ export default function CaseSubmissionForm() {
       fontWeight: 700,
       cursor: "pointer",
       letterSpacing: "0.02em",
-      transition: "background 0.15s",
     } as React.CSSProperties,
   };
-
-  // ============================================================
-  // 成功画面
-  // ============================================================
 
   if (submitStatus === "success") {
     return (
@@ -506,47 +469,26 @@ export default function CaseSubmissionForm() {
     );
   }
 
-  // ============================================================
-  // フォーム本体
-  // ============================================================
-
   return (
     <div style={s.wrap}>
-      <h1
-        style={{
-          color: "red",
-          fontSize: 40,
-          background: "yellow",
-          padding: 10,
-          marginBottom: 20,
-        }}
-      >
-        ココが画面に表示されていればファイルは合っています！
-      </h1>
-
-      {/* ヘッダー */}
       <div style={s.header}>
-        <h1 style={s.h1}>事件情報を投稿する</h1>
+        <h1 style={s.h1}>火災事例を投稿する</h1>
         <p style={s.subtitle}>
-          投稿内容は管理者の確認後に地図へ反映されます。個人名・詳細住所は入力しないでください。
+          投稿内容は管理者の確認後に地図へ反映されます。個人名・詳細住所・根拠のない犯人推定は入力しないでください。
         </p>
       </div>
 
-      {/* エラー表示 */}
       {submitStatus === "error" && errorMessage && (
         <div style={s.errorBox}>⚠️ {errorMessage}</div>
       )}
 
       <form onSubmit={handleSubmit} noValidate>
-
-        {/* ── セクション1: 発生情報 ── */}
         <div style={s.section}>
           <div style={s.sectionTitle}>
             <span style={s.sectionDot("#378ADD")} />
             発生情報
           </div>
 
-          {/* 発生年月 */}
           <div style={s.field}>
             <label style={s.label}>
               発生年月<span style={s.required}>必須</span>
@@ -562,7 +504,9 @@ export default function CaseSubmissionForm() {
                 >
                   <option value="">年を選択</option>
                   {YEARS.map((y) => (
-                    <option key={y} value={y}>{y}年</option>
+                    <option key={y} value={y}>
+                      {y}年
+                    </option>
                   ))}
                 </select>
               </div>
@@ -576,15 +520,16 @@ export default function CaseSubmissionForm() {
                 >
                   <option value="">月を選択</option>
                   {MONTHS.map((m) => (
-                    <option key={m} value={m}>{m}月</option>
+                    <option key={m} value={m}>
+                      {m}月
+                    </option>
                   ))}
                 </select>
               </div>
             </div>
-            <p style={s.hint}>※「〇月〇日」は扱いません。月単位での入力のみ受け付けます。</p>
+            <p style={s.hint}>※日付までは扱わず、月単位で登録します。</p>
           </div>
 
-          {/* 都道府県 */}
           <div style={s.field}>
             <label style={s.label}>
               都道府県<span style={s.required}>必須</span>
@@ -598,12 +543,13 @@ export default function CaseSubmissionForm() {
             >
               <option value="">都道府県を選択</option>
               {prefectures.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
               ))}
             </select>
           </div>
 
-          {/* 市区町村 */}
           <div style={{ ...s.field, marginBottom: 0 }}>
             <label style={s.label}>
               市区町村<span style={s.required}>必須</span>
@@ -620,91 +566,92 @@ export default function CaseSubmissionForm() {
                 {form.prefecture_id ? "市区町村を選択" : "先に都道府県を選択してください"}
               </option>
               {cities.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
             </select>
-            <p style={s.hint}>※「〇〇町〇丁目」などの番地・詳細住所は入力しないでください。</p>
+            <p style={s.hint}>※番地・丁目など詳細住所は登録しません。</p>
           </div>
         </div>
 
-        {/* ── セクション2: 事件内容 ── */}
         <div style={s.section}>
           <div style={s.sectionTitle}>
             <span style={s.sectionDot("#E24B4A")} />
-            事件内容
+            施設・火災情報
           </div>
 
-          {/* 犯罪カテゴリ */}
           <div style={s.field}>
             <label style={s.label}>
-              犯罪カテゴリ<span style={s.required}>必須</span>
+              施設種別<span style={s.required}>必須</span>
             </label>
             <select
-              name="crime_category"
-              value={form.crime_category}
+              name="facility_type"
+              value={form.facility_type}
               onChange={handleChange}
               required
               style={s.select}
             >
-              {CRIME_CATEGORIES.map((c) => (
-                <option key={c.value} value={c.value}>{c.label}</option>
+              {FACILITY_TYPES.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
               ))}
             </select>
           </div>
 
-          {/* 犯罪種別（自由記入） */}
           <div style={s.field}>
             <label style={s.label}>
-              犯罪種別<span style={s.required}>必須</span>
+              施設名称<span style={s.optional}>任意</span>
             </label>
             <input
               type="text"
-              name="crime_type"
-              placeholder="例: 窃盗、詐欺、暴行、器物損壊"
-              value={form.crime_type}
+              name="facility_name"
+              placeholder="例：〇〇寺、〇〇神社、〇〇酒造"
+              value={form.facility_name}
               onChange={handleChange}
-              required
               style={s.input}
             />
+            <p style={s.hint}>※報道・公式発表で確認できる名称のみ入力してください。</p>
           </div>
 
-          {/* 処分結果 */}
           <div style={{ ...s.field, marginBottom: 0 }}>
             <label style={s.label}>
-              処分結果<span style={s.required}>必須</span>
+              火災原因<span style={s.required}>必須</span>
             </label>
             <select
-              name="status"
-              value={form.status}
+              name="fire_cause"
+              value={form.fire_cause}
               onChange={handleChange}
               required
               style={s.select}
             >
-              {CASE_STATUSES.map((st) => (
-                <option key={st.value} value={st.value}>{st.label}</option>
+              {FIRE_CAUSES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
               ))}
             </select>
+            <p style={s.hint}>※原因が確定していない場合は「調査中」または「原因不明」を選択してください。</p>
           </div>
         </div>
 
-        {/* ── セクション3: 詳細・ソース ── */}
         <div style={s.section}>
           <div style={s.sectionTitle}>
             <span style={s.sectionDot("#1D9E75")} />
             詳細・ソース情報
           </div>
 
-          {/* プライバシー注意書き */}
           <div style={s.notice}>
-            🔒 <strong>個人情報の取り扱いについて</strong><br />
-            氏名・詳細住所・「〇〇町の〜」など個人を特定できる情報は記載しないでください。
-            管理者がマスク処理を行いますが、投稿前に必ずご確認ください。
+            🔒 <strong>掲載方針</strong>
+            <br />
+            詳細住所・個人名・根拠のない犯人推定・特定宗教や団体との関連付けは記載しないでください。
+            防災・再発防止のための公開情報として扱います。
           </div>
 
-          {/* 事件概要 */}
           <div style={s.field}>
             <label style={s.label}>
-              事件概要<span style={s.required}>必須</span>
+              火災概要<span style={s.required}>必須</span>
             </label>
             <textarea
               name="description"
@@ -714,7 +661,7 @@ export default function CaseSubmissionForm() {
               minLength={DESCRIPTION_MIN}
               maxLength={DESCRIPTION_MAX}
               rows={6}
-              placeholder={`ニュース記事などを参考に、事件の概要を${DESCRIPTION_MIN}〜${DESCRIPTION_MAX}文字で記述してください。\n\n例：○○市内のコンビニエンスストアで商品を窃取した疑いで逮捕された成人の男性について、○○地方検察庁は示談が成立したことなどを考慮し、起訴猶予処分とした。`}
+              placeholder={`ニュース記事・公式発表を参考に、火災概要を${DESCRIPTION_MIN}〜${DESCRIPTION_MAX}文字で記述してください。\n\n例：○○市の神社で本殿の一部を焼く火災が発生した。けが人は確認されておらず、消防が出火原因を調べている。`}
               style={s.textarea}
             />
             <p style={s.counter(descLength)}>
@@ -724,7 +671,6 @@ export default function CaseSubmissionForm() {
             </p>
           </div>
 
-          {/* ソースURL */}
           <div style={s.field}>
             <label style={s.label}>
               ソースURL（情報元）<span style={s.required}>必須</span>
@@ -738,10 +684,9 @@ export default function CaseSubmissionForm() {
               required
               style={s.input}
             />
-            <p style={s.hint}>ニュース記事・公式発表など、情報の出典URLを入力してください。</p>
+            <p style={s.hint}>ニュース記事・消防/自治体発表など、情報の出典URLを入力してください。</p>
           </div>
 
-          {/* 投稿者コメント */}
           <div style={{ ...s.field, marginBottom: 0 }}>
             <label style={s.label}>
               投稿者コメント<span style={s.optional}>任意</span>
@@ -751,14 +696,12 @@ export default function CaseSubmissionForm() {
               value={form.submitter_comment}
               onChange={handleChange}
               rows={3}
-              placeholder="管理者へのメモや補足情報があれば記入してください（公開されません）"
+              placeholder="管理者へのメモや補足情報があれば記入してください（原則公開されません）"
               style={s.textarea}
             />
-            <p style={s.hint}>※このコメントは管理者のみが確認できます。公開されません。</p>
           </div>
         </div>
 
-        {/* 送信ボタン */}
         <button
           type="submit"
           disabled={submitStatus === "submitting"}
