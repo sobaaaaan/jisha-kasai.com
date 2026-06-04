@@ -111,7 +111,4 @@ export default function Page() {
         上記の削除依頼窓口までご連絡ください。
       </p>
 
-
-    </main>
-  );
 }
