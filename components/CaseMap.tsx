@@ -518,10 +518,8 @@ export default function CaseMap() {
           </section>
 
           <section style={sideAdStyle}>
-            左カラム広告枠
+            左カラム枠
             <br />
-            <span style={{ fontSize: 11 }}><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3565332504315639"
-     crossorigin="anonymous"></script></span>
           </section>
 
           <section style={cardStyle}>
