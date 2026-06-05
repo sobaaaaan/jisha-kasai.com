@@ -1,22 +1,36 @@
-// ============================================================
-// components/CaseMap.tsx
-// 左カラム + 上部広告カラム + 地図メイン
-// 「cases」テーブルの latitude / longitude を直接読んで、1事件=1ピンで表示する版
-// ============================================================
-
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
+import { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
 
+console.log("★★★★★ CaseSubmissionForm.tsx が読み込まれました ★★★★★");
+
+// ============================================================
+// Supabase クライアント（公開鍵）
+// ============================================================
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-type CategoryKey =
+// ============================================================
+// 型定義
+// ============================================================
+
+type PrefecturesRow = {
+  id: number;
+  name: string;
+};
+
+type CitiesRow = {
+  id: number;
+  prefecture_id: number;
+  name: string;
+  center_lat: number | null;
+  center_lng: number | null;
+};
+
+type CrimeCategory =
   | "violent"
   | "property"
   | "sexual"
@@ -27,724 +41,740 @@ type CategoryKey =
   | "cyber"
   | "other";
 
-type CategoryFilter = "all" | CategoryKey;
+type CaseStatus =
+  | "nonprosecution"
+  | "nonprosecution_suspend"
+  | "nonprosecution_innocence"
+  | "indicted"
+  | "convicted"
+  | "acquitted"
+  | "dismissed"
+  | "other";
 
-interface CaseRow {
-  id: number;
-  latitude: number | null;
-  longitude: number | null;
-  occurred_year: number | null;
-  occurred_month: number | null;
-  crime_category: CategoryKey | string | null;
-  status: string | null;
-  description: string | null;
-  source_url: string | null;
-  submitter_comment?: string | null;
-}
-
-interface CasePoint {
-  id: number;
-  lat: number;
-  lng: number;
-  occurred_year: number | null;
-  occurred_month: number | null;
-  crime_category: CategoryKey;
-  status: string | null;
+type FormState = {
+  occurred_year: string;
+  occurred_month: string;
+  prefecture_id: string; // ID管理に変更
+  city_id: string;       // プルダウン（ID管理）に変更
+  crime_category: CrimeCategory;
+  crime_type: string;
+  status: CaseStatus;
   description: string;
-  source_url: string | null;
-  submitter_comment: string | null;
-}
-
-const CRIME_CATEGORY_LABELS: Record<CategoryKey, string> = {
-  violent: "暴力犯罪",
-  property: "財産犯罪",
-  sexual: "性犯罪",
-  drug: "薬物",
-  traffic: "交通",
-  public_order: "公序・風俗",
-  white_collar: "経済犯罪",
-  cyber: "サイバー",
-  other: "その他",
+  source_url: string;
+  submitter_comment: string;
 };
 
-const CATEGORY_COLORS: Record<CategoryKey, string> = {
-  violent: "#E24B4A",
-  property: "#378ADD",
-  sexual: "#D4537E",
-  drug: "#BA7517",
-  traffic: "#1D9E75",
-  public_order: "#7F77DD",
-  white_collar: "#639922",
-  cyber: "#888780",
-  other: "#888780",
+type SubmitStatus = "idle" | "submitting" | "success" | "error";
+
+// ============================================================
+// 定数
+// ============================================================
+
+const CRIME_CATEGORIES: { value: CrimeCategory; label: string }[] = [
+  { value: "property",     label: "財産犯罪（窃盗・詐欺・横領など）" },
+  { value: "violent",      label: "暴力犯罪（傷害・暴行・脅迫など）" },
+  { value: "drug",         label: "薬物犯罪" },
+  { value: "traffic",      label: "交通犯罪" },
+  { value: "sexual",       label: "性犯罪" },
+  { value: "public_order", label: "公序・風俗犯罪" },
+  { value: "white_collar", label: "経済・企業犯罪" },
+  { value: "cyber",        label: "サイバー犯罪" },
+  { value: "other",        label: "その他" },
+];
+
+const CASE_STATUSES: { value: CaseStatus; label: string }[] = [
+  { value: "nonprosecution_suspend",   label: "起訴猶予" },
+  { value: "nonprosecution_innocence", label: "嫌疑なし・嫌疑不十分" },
+  { value: "nonprosecution",           label: "不起訴（その他）" },
+  { value: "indicted",                 label: "起訴" },
+  { value: "convicted",                label: "有罪" },
+  { value: "acquitted",                label: "無罪" },
+  { value: "dismissed",                label: "公訴棄却" },
+  { value: "other",                    label: "その他" },
+];
+
+const CURRENT_YEAR = new Date().getFullYear();
+const YEARS = Array.from({ length: 10 }, (_, i) => CURRENT_YEAR - i);
+const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
+
+const DESCRIPTION_MIN = 100;
+const DESCRIPTION_MAX = 500;
+
+// ============================================================
+// 初期フォーム値
+// ============================================================
+
+const INITIAL_FORM: FormState = {
+  occurred_year: "",
+  occurred_month: "",
+  prefecture_id: "",
+  city_id: "",
+  crime_category: "property",
+  crime_type: "",
+  status: "nonprosecution_suspend",
+  description: "",
+  source_url: "",
+  submitter_comment: "",
 };
 
-const MAP_STYLE = {
-  version: 8,
-  sources: {
-    gsi: {
-      type: "raster",
-      tiles: ["https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      attribution:
-        '© <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>',
-      maxzoom: 18,
-    },
-  },
-  layers: [
-    {
-      id: "gsi-pale",
-      type: "raster",
-      source: "gsi",
-      minzoom: 0,
-      maxzoom: 18,
-    },
-  ],
-} as maplibregl.StyleSpecification;
+// ============================================================
+// コンポーネント
+// ============================================================
 
-function normalizeCategory(value: string | null): CategoryKey {
-  if (
-    value === "violent" ||
-    value === "property" ||
-    value === "sexual" ||
-    value === "drug" ||
-    value === "traffic" ||
-    value === "public_order" ||
-    value === "white_collar" ||
-    value === "cyber" ||
-    value === "other"
-  ) {
-    return value;
-  }
+export default function CaseSubmissionForm() {
+  const [form, setForm] = useState<FormState>(INITIAL_FORM);
+  const [prefectures, setPrefectures] = useState<PrefecturesRow[]>([]);
+  const [cities, setCities] = useState<CitiesRow[]>([]);
+  const [submitStatus, setSubmitStatus] = useState<SubmitStatus>("idle");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [descLength, setDescLength] = useState(0);
 
-  return "other";
-}
+  // ---------- データフェッチ (マスターデータ) ----------
 
-async function fetchCasePoints(categoryFilter: CategoryFilter): Promise<CasePoint[]> {
-  let query = supabase
-    .from("cases")
-    .select(
-      "id, latitude, longitude, occurred_year, occurred_month, crime_category, status, description, source_url, submitter_comment"
-    )
-    .not("latitude", "is", null)
-    .not("longitude", "is", null)
-    .order("id", { ascending: false });
+  // 1. 初期ロード時に都道府県一覧を取得
+  useEffect(() => {
+    async function fetchPrefectures() {
+      try {
+        const { data, error } = await supabase
+          .from("prefectures")
+          .select("id, name")
+          .order("id", { ascending: true });
 
-  if (categoryFilter !== "all") {
-    query = query.eq("crime_category", categoryFilter);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    console.error("Supabase fetch cases error:", error);
-    return [];
-  }
-
-  if (!data) return [];
-
-  return (data as CaseRow[])
-    .filter((row) => row.latitude != null && row.longitude != null)
-    .map((row) => ({
-      id: row.id,
-      lat: Number(row.latitude),
-      lng: Number(row.longitude),
-      occurred_year: row.occurred_year,
-      occurred_month: row.occurred_month,
-      crime_category: normalizeCategory(row.crime_category),
-      status: row.status,
-      description: row.description ?? "説明なし",
-      source_url: row.source_url,
-      submitter_comment: row.submitter_comment ?? null,
-    }))
-    .filter(
-      (item) =>
-        Number.isFinite(item.lat) &&
-        Number.isFinite(item.lng) &&
-        item.lat >= -90 &&
-        item.lat <= 90 &&
-        item.lng >= -180 &&
-        item.lng <= 180
-    );
-}
-
-function statusLabel(status: string | null): string {
-  if (status === "nonprosecution") return "不起訴";
-  if (status === "unknown") return "不明";
-  if (!status) return "未設定";
-  return status;
-}
-
-function buildPopupHTML(item: CasePoint): string {
-  const categoryLabel = CRIME_CATEGORY_LABELS[item.crime_category] ?? "その他";
-  const occurred =
-    item.occurred_year && item.occurred_month
-      ? `${item.occurred_year}年${item.occurred_month}月`
-      : item.occurred_year
-      ? `${item.occurred_year}年`
-      : "発生時期不明";
-
-  const sourceLink = item.source_url
-    ? `<a href="${item.source_url}" target="_blank" rel="noopener noreferrer" style="color:#1565c0;text-decoration:underline;">ソースを開く</a>`
-    : `<span style="color:#999;">ソースURLなし</span>`;
-
-  return `
-    <div style="font-family:sans-serif;min-width:220px;max-width:300px;">
-      <p style="margin:0 0 6px;font-weight:700;font-size:14px;line-height:1.5;">
-        ${item.description}
-      </p>
-
-      <table style="border-collapse:collapse;width:100%;margin-top:8px;">
-        <tr>
-          <td style="padding:2px 8px 2px 0;color:#666;font-size:12px;">分類</td>
-          <td style="padding:2px 0;font-weight:700;font-size:12px;">${categoryLabel}</td>
-        </tr>
-        <tr>
-          <td style="padding:2px 8px 2px 0;color:#666;font-size:12px;">処分</td>
-          <td style="padding:2px 0;font-weight:700;font-size:12px;">${statusLabel(item.status)}</td>
-        </tr>
-        <tr>
-          <td style="padding:2px 8px 2px 0;color:#666;font-size:12px;">時期</td>
-          <td style="padding:2px 0;font-weight:700;font-size:12px;">${occurred}</td>
-        </tr>
-      </table>
-
-      ${
-        item.submitter_comment
-          ? `<p style="margin:8px 0 0;color:#555;font-size:12px;line-height:1.5;">${item.submitter_comment}</p>`
-          : ""
+        if (error) throw error;
+        if (data) setPrefectures(data);
+      } catch (err) {
+        console.error("都道府県データの取得に失敗しました:", err);
+        setErrorMessage("都道府県マスターの読み込みに失敗しました。ページを再読み込みしてください。");
+        setSubmitStatus("error");
       }
-
-      <p style="margin:8px 0 0;font-size:12px;">
-        ${sourceLink}
-      </p>
-
-      <p style="margin:8px 0 0;color:#999;font-size:11px;">
-        ※現在は投稿時に保存された緯度経度を使って表示しています
-      </p>
-    </div>
-  `;
-}
-
-export default function CaseMap() {
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const markersRef = useRef<maplibregl.Marker[]>([]);
-
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
-  const [cases, setCases] = useState<CasePoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-
-  const loadData = useCallback(async (filter: CategoryFilter) => {
-    setLoading(true);
-    const result = await fetchCasePoints(filter);
-    setCases(result);
-    setLoading(false);
+    }
+    fetchPrefectures();
   }, []);
 
+  // 2. 都道府県(prefecture_id)が変更されたら、紐づく市区町村一覧を取得
   useEffect(() => {
-    loadData(categoryFilter);
-  }, [categoryFilter, loadData]);
+    if (!form.prefecture_id) {
+      setCities([]);
+      return;
+    }
 
-  useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+    async function fetchCities() {
+      try {
+        const { data, error } = await supabase
+          .from("cities")
+          .select("id, prefecture_id, name, center_lat, center_lng")
+          .eq("prefecture_id", Number(form.prefecture_id))
+          .order("id", { ascending: true });
 
-    mapRef.current = new maplibregl.Map({
-      container: mapContainerRef.current,
-      style: MAP_STYLE,
-      center: [137.0, 37.0],
-      zoom: 4.8,
+        if (error) throw error;
+        if (data) setCities(data);
+      } catch (err) {
+        console.error("市区町村データの取得に失敗しました:", err);
+        setErrorMessage("市区町村マスターの読み込みに失敗しました。");
+        setSubmitStatus("error");
+      }
+    }
+
+    fetchCities();
+  }, [form.prefecture_id]);
+
+  // ---------- ハンドラ ----------
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
+    const { name, value } = e.target;
+    
+    setForm((prev) => {
+      const updated = { ...prev, [name]: value };
+      
+      // 都道府県が変更されたら市区町村の選択をリセットする
+      if (name === "prefecture_id") {
+        updated.city_id = "";
+      }
+      return updated;
     });
 
-    mapRef.current.addControl(new maplibregl.NavigationControl(), "top-right");
-    mapRef.current.addControl(
-      new maplibregl.ScaleControl({ unit: "metric" }),
-      "bottom-right"
-    );
+    if (name === "description") setDescLength(value.length);
+  };
 
-    return () => {
-      markersRef.current.forEach((m) => m.remove());
-      markersRef.current = [];
-      mapRef.current?.remove();
-      mapRef.current = null;
-    };
-  }, []);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitStatus("submitting");
+    setErrorMessage("");
 
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
+    // 1. 基本バリデーション
+    if (!form.prefecture_id || !form.city_id) {
+      setErrorMessage("都道府県と市区町村を選択してください。");
+      setSubmitStatus("error");
+      return;
+    }
 
-    markersRef.current.forEach((m) => m.remove());
-    markersRef.current = [];
+    if (descLength < DESCRIPTION_MIN) {
+      setErrorMessage(`事件概要は${DESCRIPTION_MIN}文字以上入力してください（現在 ${descLength} 文字）`);
+      setSubmitStatus("error");
+      return;
+    }
 
-    if (loading) return;
+    // URL フォーマットチェック（入力がある場合のみ）
+    if (form.source_url && !form.source_url.startsWith("http")) {
+      setErrorMessage("ソースURLは http:// または https:// で始まる形式で入力してください");
+      setSubmitStatus("error");
+      return;
+    }
 
-    cases.forEach((item) => {
-      const color = CATEGORY_COLORS[item.crime_category] ?? CATEGORY_COLORS.other;
+    // 2. 選択された市区町村（座標データ含む）の特定と検証
+    const selectedCity = cities.find((c) => c.id === Number(form.city_id));
+    
+    if (!selectedCity) {
+      setErrorMessage("選択された市区町村データが見つかりません。");
+      setSubmitStatus("error");
+      return;
+    }
 
-      const el = document.createElement("div");
-      el.style.cssText = `
-        width: 22px;
-        height: 22px;
-        border-radius: 50%;
-        background: ${color};
-        border: 3px solid #fff;
-        cursor: pointer;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.32);
-        transition: transform 0.15s ease;
-      `;
-      el.title = item.description;
+    if (selectedCity.center_lat === null || selectedCity.center_lng === null) {
+      setErrorMessage("選択された市区町村にピン表示用の位置情報（緯度・経度）が登録されていません。管理者に連絡してください。");
+      setSubmitStatus("error");
+      return;
+    }
 
+    try {
+      // 3. cases テーブルへのインサート処理
+      const { error } = await supabase.from("cases").insert({
+        prefecture_id:  Number(form.prefecture_id),
+        city_id:        selectedCity.id,
+        latitude:       selectedCity.center_lat,  // 中心緯度をセット
+        longitude:      selectedCity.center_lng,  // 中心経度をセット
+        occurred_year:  Number(form.occurred_year),
+        occurred_month: Number(form.occurred_month),
+        crime_category: form.crime_category,
+        crime_type:     form.crime_type,
+        status:         form.status,
+        description:    form.description,
+        description_masked: false,
+        source_url:     form.source_url || null,
+        source_name:    null,
+        is_published:   false, // 管理者承認待ち
+      });
 
-      const popup = new maplibregl.Popup({
-        offset: 18,
-        closeButton: true,
-        maxWidth: "320px",
-      }).setHTML(buildPopupHTML(item));
+      if (error) throw error;
 
-      const marker = new maplibregl.Marker({ element: el, anchor: "center" })
-        // MapLibreは [経度, 緯度] の順番です
-        .setLngLat([item.lng, item.lat])
-        .setPopup(popup)
-        .addTo(map);
+      setSubmitStatus("success");
+      setForm(INITIAL_FORM);
+      setDescLength(0);
+    } catch (err: unknown) {
+      console.error("投稿エラー:", err);
+      const message = err instanceof Error ? err.message : "投稿に失敗しました。時間をおいて再度お試しください。";
+      setErrorMessage(message);
+      setSubmitStatus("error");
+    }
+  };
 
-      markersRef.current.push(marker);
-    });
-  }, [cases, loading]);
+  // ============================================================
+  // スタイル定数（インライン）
+  // ============================================================
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      mapRef.current?.resize();
-    }, 260);
+  const s = {
+    wrap: {
+      maxWidth: 720,
+      margin: "40px auto",
+      padding: "0 16px 60px",
+      fontFamily: "'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif",
+    } as React.CSSProperties,
 
-    return () => window.clearTimeout(timer);
-  }, [isMobileSidebarOpen]);
+    header: {
+      borderBottom: "2px solid #1a1a1a",
+      paddingBottom: 16,
+      marginBottom: 32,
+    } as React.CSSProperties,
 
-  const latestCases = [...cases].slice(0, 10);
+    h1: {
+      fontSize: 22,
+      fontWeight: 700,
+      letterSpacing: "-0.02em",
+      margin: "0 0 6px",
+      color: "#1a1a1a",
+    } as React.CSSProperties,
 
-  return (
-    <div
-      className="case-map-layout"
-      style={{
-        width: "100vw",
-        height: "100vh",
-        display: "flex",
-        background: "#f4f4f4",
-        overflow: "hidden",
-        position: "relative",
-      }}
-    >
-      <style>{`
-        .mobile-menu-button,
-        .mobile-sidebar-close,
-        .mobile-sidebar-overlay {
-          display: none;
-        }
+    subtitle: {
+      fontSize: 13,
+      color: "#666",
+      margin: 0,
+    } as React.CSSProperties,
 
-        @media (max-width: 768px) {
-          .case-map-layout {
-            display: block !important;
-          }
+    section: {
+      background: "#fff",
+      border: "1px solid #e8e8e8",
+      borderRadius: 12,
+      padding: "24px 28px",
+      marginBottom: 16,
+    } as React.CSSProperties,
 
-          .case-map-sidebar {
-            position: fixed !important;
-            top: 0;
-            left: 0;
-            width: min(88vw, 360px) !important;
-            min-width: 0 !important;
-            max-width: min(88vw, 360px) !important;
-            height: 100dvh !important;
-            z-index: 1000 !important;
-            transform: translateX(-104%);
-            transition: transform 0.24s ease;
-            border-right: 1px solid #ddd;
-          }
+    sectionTitle: {
+      fontSize: 12,
+      fontWeight: 700,
+      letterSpacing: "0.08em",
+      textTransform: "uppercase" as const,
+      color: "#888",
+      marginBottom: 20,
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+    } as React.CSSProperties,
 
-          .case-map-sidebar.open {
-            transform: translateX(0);
-          }
+    sectionDot: (color: string): React.CSSProperties => ({
+      width: 6,
+      height: 6,
+      borderRadius: "50%",
+      background: color,
+      display: "inline-block",
+    }),
 
-          .case-map-main {
-            width: 100vw !important;
-            height: 100dvh !important;
-            min-width: 0 !important;
-          }
+    field: {
+      marginBottom: 20,
+    } as React.CSSProperties,
 
-          .case-map-topbar {
-            display: none !important;
-          }
+    label: {
+      display: "block",
+      fontSize: 13,
+      fontWeight: 600,
+      color: "#333",
+      marginBottom: 6,
+    } as React.CSSProperties,
 
-          .mobile-menu-button {
-            display: block !important;
-          }
+    required: {
+      fontSize: 11,
+      color: "#E24B4A",
+      marginLeft: 4,
+      fontWeight: 400,
+    } as React.CSSProperties,
 
-          .mobile-sidebar-close {
-            display: block !important;
-          }
+    optional: {
+      fontSize: 11,
+      color: "#999",
+      marginLeft: 4,
+      fontWeight: 400,
+    } as React.CSSProperties,
 
-          .mobile-sidebar-overlay.open {
-            display: block !important;
-          }
-        }
-      `}</style>
-      <button
-        type="button"
-        className="mobile-menu-button"
-        onClick={() => setIsMobileSidebarOpen(true)}
-        style={{
-          position: "absolute",
-          top: 12,
-          left: 12,
-          zIndex: 900,
-          border: "none",
-          borderRadius: 999,
-          padding: "10px 14px",
-          background: "#1a1a1a",
-          color: "#fff",
-          fontSize: 14,
-          fontWeight: 700,
-          boxShadow: "0 2px 10px rgba(0,0,0,0.25)",
-          cursor: "pointer",
-        }}
-      >
-        ☰ 情報
-      </button>
-      <button
-        type="button"
-        aria-label="左カラムを閉じる"
-        className={`mobile-sidebar-overlay ${isMobileSidebarOpen ? "open" : ""}`}
-        onClick={() => setIsMobileSidebarOpen(false)}
-        style={{
-          position: "fixed",
-          inset: 0,
-          zIndex: 999,
-          border: "none",
-          background: "rgba(0,0,0,0.28)",
-          padding: 0,
-          cursor: "pointer",
-        }}
-      />
-      <aside
-        className={`case-map-sidebar ${isMobileSidebarOpen ? "open" : ""}`}
-        style={{
-          width: 340,
-          minWidth: 300,
-          maxWidth: 380,
-          height: "100vh",
-          overflowY: "auto",
-          background: "#ffffff",
-          borderRight: "1px solid #ddd",
-          boxShadow: "2px 0 8px rgba(0,0,0,0.06)",
-          zIndex: 20,
-        }}
-      >
-        <div style={{ padding: "18px 18px 24px" }}>
+    hint: {
+      fontSize: 12,
+      color: "#888",
+      marginTop: 5,
+    } as React.CSSProperties,
+
+    input: {
+      width: "100%",
+      padding: "10px 12px",
+      border: "1.5px solid #e0e0e0",
+      borderRadius: 8,
+      fontSize: 14,
+      color: "#1a1a1a",
+      background: "#fafafa",
+      outline: "none",
+      transition: "border-color 0.15s",
+      boxSizing: "border-box" as const,
+    } as React.CSSProperties,
+
+    select: {
+      width: "100%",
+      padding: "10px 12px",
+      border: "1.5px solid #e0e0e0",
+      borderRadius: 8,
+      fontSize: 14,
+      color: "#1a1a1a",
+      background: "#fafafa",
+      outline: "none",
+      cursor: "pointer",
+      boxSizing: "border-box" as const,
+      appearance: "none" as const,
+      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%23999' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
+      backgroundRepeat: "no-repeat",
+      backgroundPosition: "right 12px center",
+      paddingRight: 36,
+    } as React.CSSProperties,
+
+    textarea: {
+      width: "100%",
+      padding: "10px 12px",
+      border: "1.5px solid #e0e0e0",
+      borderRadius: 8,
+      fontSize: 14,
+      color: "#1a1a1a",
+      background: "#fafafa",
+      outline: "none",
+      resize: "vertical" as const,
+      lineHeight: 1.7,
+      boxSizing: "border-box" as const,
+      fontFamily: "inherit",
+    } as React.CSSProperties,
+
+    row: {
+      display: "flex",
+      gap: 12,
+    } as React.CSSProperties,
+
+    counter: (count: number): React.CSSProperties => ({
+      fontSize: 12,
+      marginTop: 5,
+      textAlign: "right",
+      color:
+        count < DESCRIPTION_MIN
+          ? "#E24B4A"
+          : count > DESCRIPTION_MAX
+          ? "#E24B4A"
+          : "#1D9E75",
+      fontWeight: 500,
+    }),
+
+    notice: {
+      background: "#FFF8E6",
+      border: "1px solid #F5D68A",
+      borderRadius: 8,
+      padding: "12px 16px",
+      fontSize: 13,
+      color: "#7A5800",
+      lineHeight: 1.6,
+      marginBottom: 20,
+    } as React.CSSProperties,
+
+    errorBox: {
+      background: "#FFF0F0",
+      border: "1px solid #F7C1C1",
+      borderRadius: 8,
+      padding: "12px 16px",
+      fontSize: 13,
+      color: "#791F1F",
+      marginBottom: 16,
+    } as React.CSSProperties,
+
+    successBox: {
+      background: "#E1F5EE",
+      border: "1px solid #5DCAA5",
+      borderRadius: 12,
+      padding: "32px 28px",
+      textAlign: "center" as const,
+    } as React.CSSProperties,
+
+    submitBtn: {
+      width: "100%",
+      padding: "14px 24px",
+      background: "#1a1a1a",
+      color: "#fff",
+      border: "none",
+      borderRadius: 10,
+      fontSize: 15,
+      fontWeight: 700,
+      cursor: "pointer",
+      letterSpacing: "0.02em",
+      transition: "background 0.15s",
+    } as React.CSSProperties,
+  };
+
+  // ============================================================
+  // 成功画面
+  // ============================================================
+
+  if (submitStatus === "success") {
+    return (
+      <div style={s.wrap}>
+        <div style={s.successBox}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>✓</div>
+          <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 8px", color: "#085041" }}>
+            投稿を受け付けました
+          </h2>
+          <p style={{ fontSize: 14, color: "#0F6E56", margin: "0 0 24px", lineHeight: 1.7 }}>
+            管理者が内容を確認後、地図に反映されます。<br />
+            審査には数日かかる場合があります。
+          </p>
           <button
-            type="button"
-            className="mobile-sidebar-close"
-            onClick={() => setIsMobileSidebarOpen(false)}
+            onClick={() => setSubmitStatus("idle")}
             style={{
-              marginLeft: "auto",
-              marginBottom: 12,
+              padding: "10px 24px",
+              background: "#085041",
+              color: "#fff",
               border: "none",
-              borderRadius: 999,
-              padding: "7px 12px",
-              background: "#eeeeee",
-              color: "#222",
-              fontSize: 13,
-              fontWeight: 700,
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 600,
               cursor: "pointer",
             }}
           >
-            閉じる
+            続けて投稿する
           </button>
-          <h1 style={{ fontSize: 20, margin: "0 0 4px", fontWeight: 800, color: "#1a1a1a" }}>
-            寺社等重要施設火災マップ
-          </h1>
+        </div>
+      </div>
+    );
+  }
 
-          <p style={{ margin: "0 0 14px", color: "#666", fontSize: 12, lineHeight: 1.6 }}>
-            報道・公開情報をもとに、重要施設の不審火災を地図上で可視化します。
-          </p>
+  // ============================================================
+  // フォーム本体
+  // ============================================================
 
-          <a
-            href="/submit"
-            style={{
-              display: "block",
-              textAlign: "center",
-              padding: "10px 12px",
-              borderRadius: 10,
-              background: "#1a1a1a",
-              color: "#fff",
-              textDecoration: "none",
-              fontSize: 14,
-              fontWeight: 700,
-              marginBottom: 16,
-            }}
-          >
-            火災事例を投稿する
-          </a>
+  return (
+    <div style={s.wrap}>
+      <h1
+        style={{
+          color: "red",
+          fontSize: 40,
+          background: "yellow",
+          padding: 10,
+          marginBottom: 20,
+        }}
+      >
+        ココが画面に表示されていればファイルは合っています！
+      </h1>
 
-          <section style={cardStyle}>
-            <div style={{ fontSize: 12, color: "#777", marginBottom: 4 }}>
-              表示中の事件数
+      {/* ヘッダー */}
+      <div style={s.header}>
+        <h1 style={s.h1}>事件情報を投稿する</h1>
+        <p style={s.subtitle}>
+          投稿内容は管理者の確認後に地図へ反映されます。個人名・詳細住所は入力しないでください。
+        </p>
+      </div>
+
+      {/* エラー表示 */}
+      {submitStatus === "error" && errorMessage && (
+        <div style={s.errorBox}>⚠️ {errorMessage}</div>
+      )}
+
+      <form onSubmit={handleSubmit} noValidate>
+
+        {/* ── セクション1: 発生情報 ── */}
+        <div style={s.section}>
+          <div style={s.sectionTitle}>
+            <span style={s.sectionDot("#378ADD")} />
+            発生情報
+          </div>
+
+          {/* 発生年月 */}
+          <div style={s.field}>
+            <label style={s.label}>
+              発生年月<span style={s.required}>必須</span>
+            </label>
+            <div style={s.row}>
+              <div style={{ flex: 1 }}>
+                <select
+                  name="occurred_year"
+                  value={form.occurred_year}
+                  onChange={handleChange}
+                  required
+                  style={s.select}
+                >
+                  <option value="">年を選択</option>
+                  {YEARS.map((y) => (
+                    <option key={y} value={y}>{y}年</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <select
+                  name="occurred_month"
+                  value={form.occurred_month}
+                  onChange={handleChange}
+                  required
+                  style={s.select}
+                >
+                  <option value="">月を選択</option>
+                  {MONTHS.map((m) => (
+                    <option key={m} value={m}>{m}月</option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div style={{ fontSize: 28, fontWeight: 800, color: "#111" }}>
-              {loading ? "…" : cases.length.toLocaleString()}
-              <span style={{ fontSize: 13, color: "#777", marginLeft: 4 }}>件</span>
-            </div>
-          </section>
+            <p style={s.hint}>※「〇月〇日」は扱いません。月単位での入力のみ受け付けます。</p>
+          </div>
 
-          <section style={cardStyle}>
-            <h2 style={sectionTitleStyle}>絞り込み</h2>
-
-            <label style={labelStyle}>施設別</label>
+          {/* 都道府県 */}
+          <div style={s.field}>
+            <label style={s.label}>
+              都道府県<span style={s.required}>必須</span>
+            </label>
             <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}
-              style={inputStyle}
+              name="prefecture_id"
+              value={form.prefecture_id}
+              onChange={handleChange}
+              required
+              style={s.select}
             >
-              <option value="all">すべて</option>
-              {Object.entries(CRIME_CATEGORY_LABELS).map(([k, label]) => (
-                <option key={k} value={k}>
-                  {label}
-                </option>
+              <option value="">都道府県を選択</option>
+              {prefectures.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
+          </div>
 
-            <p style={{ fontSize: 11, color: "#999", lineHeight: 1.6, margin: "10px 0 0" }}>
-              ※latitude / longitude が入っている火災のみ表示します。
-            </p>
-          </section>
-
-          <section style={sideAdStyle}>
-            左カラム枠
-            <br />
-          </section>
-
-          <section style={cardStyle}>
-            <h2 style={sectionTitleStyle}>新着投稿</h2>
-
-            {loading ? (
-              <p style={emptyTextStyle}>読み込み中…</p>
-            ) : latestCases.length === 0 ? (
-              <p style={emptyTextStyle}>表示できるデータがありません。cases.latitude / cases.longitude を確認してください。</p>
-            ) : (
-              <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                {latestCases.map((item) => (
-                  <li
-                    key={item.id}
-                    style={{ borderBottom: "1px solid #eee", padding: "8px 0", fontSize: 13 }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsMobileSidebarOpen(false);
-                        mapRef.current?.flyTo({
-                          center: [item.lng, item.lat],
-                          zoom: 12,
-                          speed: 0.8,
-                        });
-                      }}
-                      style={{
-                        border: "none",
-                        background: "transparent",
-                        padding: 0,
-                        margin: 0,
-                        cursor: "pointer",
-                        textAlign: "left",
-                        color: "#1565c0",
-                        fontWeight: 700,
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      {item.description.length > 42
-                        ? `${item.description.slice(0, 42)}…`
-                        : item.description}
-                    </button>
-                    <div style={{ color: "#777", fontSize: 12 }}>
-                      {CRIME_CATEGORY_LABELS[item.crime_category]} / {statusLabel(item.status)}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section style={cardStyle}>
-            <h2 style={sectionTitleStyle}>お知らせ</h2>
-            <p style={{ fontSize: 12, color: "#666", lineHeight: 1.7, margin: 0 }}>
-              現在は「1事件=1ピン」の試験表示です。住所から緯度経度を自動取得する処理を追加すると、投稿内容が自動で地図に反映されます。
-            </p>
-          </section>
-
-
-          <section style={legalLinksStyle}>
-            <h2 style={legalLinksTitleStyle}>サイト運営方針</h2>
-             <a href="/operator" style={legalLinkStyle}>
-              サイト運営者情報
-            </a>
-            <a href="/policy" style={legalLinkStyle}>
-              投稿ポリシー
-            </a>
-              <a href="/privacy" style={legalLinkStyle}>
-              プライバシーポリシー
-            </a>
-            <a href="/delete-request" style={legalLinkStyle}>
-              削除依頼フォーム
-            </a>
-            <a href="/appeal" style={legalLinkStyle}>
-              異議申立てフォーム
-            </a>
-            <p style={{ fontSize: 11, color: "#999", lineHeight: 1.6, margin: "10px 0 0" }}>
-              掲載内容に問題がある場合は、削除依頼または異議申立てフォームからご連絡ください。
-            </p>
-              <a href="/contact" style={legalLinkStyle}>
-              お問い合わせ
-            </a>
-           
-          
-             <a href="/about" style={legalLinkStyle}>
-              このサイトの目的
-            </a>
-            
-            
-          </section>
+          {/* 市区町村 */}
+          <div style={{ ...s.field, marginBottom: 0 }}>
+            <label style={s.label}>
+              市区町村<span style={s.required}>必須</span>
+            </label>
+            <select
+              name="city_id"
+              value={form.city_id}
+              onChange={handleChange}
+              disabled={!form.prefecture_id}
+              required
+              style={s.select}
+            >
+              <option value="">
+                {form.prefecture_id ? "市区町村を選択" : "先に都道府県を選択してください"}
+              </option>
+              {cities.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <p style={s.hint}>※「〇〇町〇丁目」などの番地・詳細住所は入力しないでください。</p>
+          </div>
         </div>
-      </aside>
 
-      <section className="case-map-main" style={{ flex: 1, height: "100vh", display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <header className="case-map-topbar" style={topBarStyle}>
-          <div style={topAdStyle}>
-            上部広告枠
-            <br />
-            728×90 / 970×90 などの横長広告を想定
+        {/* ── セクション2: 事件内容 ── */}
+        <div style={s.section}>
+          <div style={s.sectionTitle}>
+            <span style={s.sectionDot("#E24B4A")} />
+            事件内容
           </div>
-        </header>
 
-        <main style={{ flex: 1, position: "relative", minHeight: 0 }}>
-          <div ref={mapContainerRef} style={{ width: "100%", height: "100%" }} />
-
-          <div
-            style={{
-              position: "absolute",
-              bottom: 12,
-              right: 60,
-              fontSize: 10,
-              color: "#777",
-              background: "rgba(255,255,255,0.85)",
-              padding: "4px 8px",
-              borderRadius: 6,
-              zIndex: 10,
-            }}
-          >
-            cases テーブルの latitude / longitude を使って表示中
+          {/* 犯罪カテゴリ */}
+          <div style={s.field}>
+            <label style={s.label}>
+              犯罪カテゴリ<span style={s.required}>必須</span>
+            </label>
+            <select
+              name="crime_category"
+              value={form.crime_category}
+              onChange={handleChange}
+              required
+              style={s.select}
+            >
+              {CRIME_CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
           </div>
-        </main>
-      </section>
+
+          {/* 犯罪種別（自由記入） */}
+          <div style={s.field}>
+            <label style={s.label}>
+              犯罪種別<span style={s.required}>必須</span>
+            </label>
+            <input
+              type="text"
+              name="crime_type"
+              placeholder="例: 窃盗、詐欺、暴行、器物損壊"
+              value={form.crime_type}
+              onChange={handleChange}
+              required
+              style={s.input}
+            />
+          </div>
+
+          {/* 処分結果 */}
+          <div style={{ ...s.field, marginBottom: 0 }}>
+            <label style={s.label}>
+              処分結果<span style={s.required}>必須</span>
+            </label>
+            <select
+              name="status"
+              value={form.status}
+              onChange={handleChange}
+              required
+              style={s.select}
+            >
+              {CASE_STATUSES.map((st) => (
+                <option key={st.value} value={st.value}>{st.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* ── セクション3: 詳細・ソース ── */}
+        <div style={s.section}>
+          <div style={s.sectionTitle}>
+            <span style={s.sectionDot("#1D9E75")} />
+            詳細・ソース情報
+          </div>
+
+          {/* プライバシー注意書き */}
+          <div style={s.notice}>
+            🔒 <strong>個人情報の取り扱いについて</strong><br />
+            氏名・詳細住所・「〇〇町の〜」など個人を特定できる情報は記載しないでください。
+            管理者がマスク処理を行いますが、投稿前に必ずご確認ください。
+          </div>
+
+          {/* 事件概要 */}
+          <div style={s.field}>
+            <label style={s.label}>
+              事件概要<span style={s.required}>必須</span>
+            </label>
+            <textarea
+              name="description"
+              value={form.description}
+              onChange={handleChange}
+              required
+              minLength={DESCRIPTION_MIN}
+              maxLength={DESCRIPTION_MAX}
+              rows={6}
+              placeholder={`ニュース記事などを参考に、事件の概要を${DESCRIPTION_MIN}〜${DESCRIPTION_MAX}文字で記述してください。\n\n例：○○市内のコンビニエンスストアで商品を窃取した疑いで逮捕された成人の男性について、○○地方検察庁は示談が成立したことなどを考慮し、起訴猶予処分とした。`}
+              style={s.textarea}
+            />
+            <p style={s.counter(descLength)}>
+              {descLength} / {DESCRIPTION_MAX} 文字
+              {descLength < DESCRIPTION_MIN && descLength > 0 &&
+                `（あと ${DESCRIPTION_MIN - descLength} 文字以上必要）`}
+            </p>
+          </div>
+
+          {/* ソースURL */}
+          <div style={s.field}>
+            <label style={s.label}>
+              ソースURL（情報元）<span style={s.required}>必須</span>
+            </label>
+            <input
+              type="url"
+              name="source_url"
+              placeholder="https://www.example-news.jp/article/..."
+              value={form.source_url}
+              onChange={handleChange}
+              required
+              style={s.input}
+            />
+            <p style={s.hint}>ニュース記事・公式発表など、情報の出典URLを入力してください。</p>
+          </div>
+
+          {/* 投稿者コメント */}
+          <div style={{ ...s.field, marginBottom: 0 }}>
+            <label style={s.label}>
+              投稿者コメント<span style={s.optional}>任意</span>
+            </label>
+            <textarea
+              name="submitter_comment"
+              value={form.submitter_comment}
+              onChange={handleChange}
+              rows={3}
+              placeholder="管理者へのメモや補足情報があれば記入してください（公開されません）"
+              style={s.textarea}
+            />
+            <p style={s.hint}>※このコメントは管理者のみが確認できます。公開されません。</p>
+          </div>
+        </div>
+
+        {/* 送信ボタン */}
+        <button
+          type="submit"
+          disabled={submitStatus === "submitting"}
+          style={{
+            ...s.submitBtn,
+            background: submitStatus === "submitting" ? "#999" : "#1a1a1a",
+            cursor: submitStatus === "submitting" ? "not-allowed" : "pointer",
+          }}
+        >
+          {submitStatus === "submitting" ? "送信中..." : "内容を確認して投稿する →"}
+        </button>
+
+        <p style={{ fontSize: 12, color: "#aaa", textAlign: "center", marginTop: 12 }}>
+          投稿後、管理者の承認を経て地図に反映されます
+        </p>
+      </form>
     </div>
   );
 }
-
-const cardStyle: React.CSSProperties = {
-  border: "1px solid #e7e7e7",
-  borderRadius: 12,
-  padding: 14,
-  marginBottom: 16,
-  background: "#fff",
-};
-
-const sectionTitleStyle: React.CSSProperties = {
-  fontSize: 14,
-  margin: "0 0 12px",
-  fontWeight: 700,
-  color: "#222",
-};
-
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: 12,
-  color: "#666",
-  margin: "10px 0 5px",
-  fontWeight: 700,
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  fontSize: 13,
-  padding: "8px 10px",
-  borderRadius: 8,
-  border: "1px solid #ddd",
-  boxSizing: "border-box",
-  background: "#fff",
-};
-
-const emptyTextStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: "#999",
-  margin: 0,
-};
-
-const sideAdStyle: React.CSSProperties = {
-  border: "1px dashed #cfcfcf",
-  borderRadius: 12,
-  padding: 16,
-  marginBottom: 16,
-  background: "#fcfcfc",
-  color: "#999",
-  textAlign: "center",
-  fontSize: 13,
-};
-
-const topBarStyle: React.CSSProperties = {
-  height: 96,
-  minHeight: 96,
-  background: "#fff",
-  borderBottom: "1px solid #ddd",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: "8px 16px",
-  boxSizing: "border-box",
-  zIndex: 15,
-};
-
-const topAdStyle: React.CSSProperties = {
-  width: "100%",
-  maxWidth: 970,
-  height: 90,
-  border: "1px dashed #cfcfcf",
-  borderRadius: 8,
-  background: "#fafafa",
-  color: "#999",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  textAlign: "center",
-  fontSize: 13,
-  lineHeight: 1.5,
-};
-
-
-const legalLinksStyle: React.CSSProperties = {
-  borderTop: "1px solid #eee",
-  paddingTop: 14,
-  marginTop: 4,
-  marginBottom: 4,
-};
-
-const legalLinksTitleStyle: React.CSSProperties = {
-  fontSize: 12,
-  margin: "0 0 8px",
-  fontWeight: 700,
-  color: "#777",
-};
-
-const legalLinkStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: 12,
-  color: "#1565c0",
-  textDecoration: "underline",
-  marginBottom: 7,
-  lineHeight: 1.5,
-};
